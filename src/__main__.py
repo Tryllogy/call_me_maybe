@@ -1,4 +1,4 @@
-from .parsing import Parsing
+from src.llm import Llm_interpret
 import sys
 
 
@@ -10,10 +10,16 @@ def main() -> None:
         print("--output <output_file>")
         return
     try:
-        parser: Parsing = Parsing.from_json(sys.argv[2], sys.argv[4])
+        print("Mounting llm_interpret")
+        llm: Llm_interpret = Llm_interpret.from_json(sys.argv[2], sys.argv[4])
+        print("Done")
     except Exception as e:
-        print(f"Error: {e}")
+        for error in e.errors():
+            print(error["msg"])
         sys.exit(1)
+
+    llm.interpret()
+    sys.exit(0)
 
 
 if __name__ == "__main__":
