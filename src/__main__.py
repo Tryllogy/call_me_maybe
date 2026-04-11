@@ -1,4 +1,4 @@
-from src.llm import Llm_interpret
+from src.llm import LlmInterpret
 import sys
 
 
@@ -10,8 +10,8 @@ def main() -> None:
         print("--output <output_file>")
         return
     try:
-        print("Mounting llm_interpret")
-        llm: Llm_interpret = Llm_interpret.from_json(sys.argv[2], sys.argv[4])
+        print("Mounting LlmInterpret")
+        llm: LlmInterpret = LlmInterpret.from_json(sys.argv[2], sys.argv[4], sys.argv[6])
         print("Done")
     except Exception as e:
         for error in e.errors():
