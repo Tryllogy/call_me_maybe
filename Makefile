@@ -5,6 +5,9 @@ PIP := $(VENV)/bin/pip
 run:
 	uv run $(PYTHON) -m src --functions_definition data/input/functions_definition.json --input data/input/function_calling_tests.json --output data/output/function_calls.json 
 
+test:
+	uv run $(PYTHON) -m src --functions_definition data/input/functions_definition.json --input data/input/test.json --output data/output/function_calls.json 
+
 help:
 	@echo "Available targets:"
 	@echo "  make venv       			- Create virtualenv using python3.13"
