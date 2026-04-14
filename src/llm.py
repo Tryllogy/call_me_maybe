@@ -3,6 +3,7 @@ from src.parsing_validator import ParsingValidator
 from llm_sdk import Small_LLM_Model
 import os
 import time
+from typing import Any, Optional
 
 
 class LlmInterpret:
@@ -17,15 +18,6 @@ class LlmInterpret:
         self.llm: Small_LLM_Model = Small_LLM_Model()
         self.name_output_file: str = name_output_file
         self.create_output_file()
-
-        with open(self.llm.get_path_to_vocab_file(), "r") as f:
-            self.vocab: dict = json.loads(f.read())
-
-        with open(self.llm.get_path_to_merges_file(), "r") as f:
-            self.merge: str = f.read()
-
-        with open(self.llm.get_path_to_tokenizer_file(), "r") as f:
-            self.tokenizer: dict = json.loads(f.read())
 
     @classmethod
     def from_json(
@@ -73,88 +65,53 @@ class LlmInterpret:
     def interpret(
             self
     ) -> None:
-        first_time = time.time()
-        functions_token: list[int] = self.make_base_helper()
-        responses: list[str] = []
+        base_helper: str = self.make_base_helper()
+        tensor: Any = None
+        encoded_list = []
+        max_len: int = 0
 
-        for i, d in enumerate(self.input_data):
-            loop_time = time.time()
-            copy_functions_token = functions_token.copy()
+        for d in self.input_data:
+            input_helper: str = base_helper
+            input_helper += f"Prompt:\n{d['prompt']}\nAnswer:\n"
+            input_helper += "{\n\"prompt\": \"" + \
+                d['prompt'] + "\",\n  \"name\": \""
+            tensor = self.llm.encode(input_helper)
+            encoded_list.append(tensor[0])
+            if len(tensor[0]) > max_len:
+                max_len = len(tensor[0])
 
-            self.torch_tensor_to_ids(self.llm.encode(
-                f"Prompt:\n{d['prompt']}\nAnswer:\n"), copy_functions_token)
-            self.torch_tensor_to_ids(self.llm.encode("{\n\"prompt\": \"" + d['prompt'] + "\",\n  \"name\": \""),
-                                     copy_functions_token)
-            response = self.generate_response(
-                copy_functions_token,
-                self.llm.get_logits_from_input_ids(copy_functions_token),
-                d['prompt'])
-            responses.append(response)
-            print("Time for prompt n°", i, ":",
-                  time.time() - loop_time, "seconds")
-        print("Total time:", time.time() - first_time, "seconds")
-        with open(self.name_output_file, "a+") as f:
-            f.write("[\n")
-            for i, response in enumerate(responses):
-                dict_json: dict = self.make_dict_for_json(
-                    response=response
-                )
-                json.dump(dict_json, f, indent=4)
-                if i != len(self.input_data) - 1:
-                    f.write(",\n")
-            f.write("\n]")
+        # with open(self.name_output_file, "a+") as f:
+        #     f.write("[\n")
+        #     for i, response in enumerate(responses):
+        #         dict_json: dict = self.make_dict_for_json(
+        #             response=response
+        #         )
+        #         json.dump(dict_json, f, indent=4)
+        #         if i != len(self.input_data) - 1:
+        #             f.write(",\n")
+        #     f.write("\n]")
 
     def make_base_helper(
             self
     ) -> list[int]:
-        functions_token: list[int] = []
-        functions_token = self.torch_tensor_to_ids(self.llm.encode(
-            json.dumps(self.functions)), functions_token)
-        self.torch_tensor_to_ids(self.llm.encode(
-            "Return exactly one valid JSON object.\n"
-            "No markdown code fences.\n"
-            "Do not output any text before or after the JSON object.\n"
-            "Keys must be exactly: prompt, name, parameters.\n"
-            "name must be one of the allowed function names.\n"
-            "parameters must be a JSON object.\n"
-            "First caracter must be { and last character must be }.\n"
-            "Example of valid output:\n"),
-            functions_token)
-        self.torch_tensor_to_ids(self.llm.encode(
-            "{\n \"prompt\": \"Welcome hello\","
-            "\n  \"name\": \"fn_greet\","
-            "\n  \"parameters\": {\n    \"name\": "
-            "\"hello\"\n   }\n}\n"), functions_token)
-        self.add_functions_name_token(functions_token)
-        return functions_token
+        base_helper: str = json.dumps(self.functions)
+        base_helper += "\nReturn exactly one valid JSON object.\n"
+        base_helper += "No markdown code fences.\n"
+        base_helper += "Do not output any text before or after the JSON object.\n"
+        base_helper += "Keys must be exactly: prompt, name, parameters.\n"
+        base_helper += "name must be one of the allowed function names.\n"
+        base_helper += "parameters must be a JSON object.\n"
+        base_helper += "First caracter must be { and last character must be }.\n"
+        base_helper += "Example of valid output:\n"
+        base_helper += "\"fn_greet\","
+        base_helper += "\n  \"parameters\": {\n    \"name\": "
+        base_helper += "\"hello\"\n   }\n}\n"
+        base_helper += "The functions names are:\n"
+        base_helper += self.get_functions_name()
+        return base_helper
 
-    def generate_response(self, ids, logit, prompt: str) -> None:
-        braket_opens: int = 1
-        prompt = json.dumps(prompt)
-        if "\"" in prompt:
-            response: str = "{\n\"prompt\": " + \
-                prompt + ",\n  \"name\": \""
-        else:
-            response: str = "{\n\"prompt\": \"" + prompt + "\",\n  \"name\": \""
-        last_token: str = ""
-        while 1:
-            next_token_id = logit.index(max(logit))
-            ids.append(next_token_id)
-            logit = self.llm.get_logits_from_input_ids(
-                ids)
-            last_token = self.llm.decode(ids[-1])
-            if "{" in last_token:
-                for c in last_token:
-                    if c == "{":
-                        braket_opens += 1
-            elif "}" in last_token:
-                for c in last_token:
-                    if c == "}":
-                        braket_opens -= 1
-            response += self.llm.decode(ids[-1])
-            if braket_opens == 0:
-                break
-        return response
+    def generate_response(self, batch_tensor) -> None:
+        pass
 
     def make_dict_for_json(
             self,
@@ -180,14 +137,10 @@ class LlmInterpret:
             return dict_json
         return dict_json
 
-    def add_functions_name_token(
-            self,
-            ids: list[int] = None
-    ) -> list[int]:
-        if ids is None:
-            ids = []
-        self.torch_tensor_to_ids(self.llm.encode(
-            "The functions names are:\n"), ids)
+    def get_functions_name(
+            self
+    ) -> list:
+        names: list[str] = []
         for f in self.functions:
-            name_encode = self.llm.encode(f["name"] + "\n")
-            self.torch_tensor_to_ids(name_encode, ids)
+            names.append(f["name"] + "\n")
+        return "".join(names)
