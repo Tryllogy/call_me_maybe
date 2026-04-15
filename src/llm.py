@@ -1,6 +1,7 @@
 import json
 from .parsing_validator import ParsingValidator
-from llm_sdk import Small_LLM_Model
+from .output_validator import OutputValidator
+from .llm_sdk import Small_LLM_Model
 import os
 import time
 from typing import Any
@@ -25,6 +26,8 @@ class LlmInterpret:
         self.llm: Small_LLM_Model = Small_LLM_Model()
         self.name_output_file: str = name_output_file
         self.create_output_file()
+        self.valid_names: list[str] = [function["name"]
+                                       for function in functions]
 
     @classmethod
     def from_json(
@@ -79,17 +82,35 @@ class LlmInterpret:
             response: str = response_prefix + self.generate_response(tensor)
             print(
                 f"Total time for prompt '{prompt}': "
-                f"{time.time() - time_input}")
+                f"{round(time.time() - time_input, 2)} seconds")
             dict_json: dict[str, Any] = self.make_dict_for_json(
                 response=response,
                 prompt=prompt,
             )
-            outputs.append(dict_json)
+            try:
+                OutputValidator(
+                    prompt=prompt,
+                    name=dict_json["name"],
+                    parameters=dict_json["parameters"],
+                    valid_names=self.valid_names
+                )
+            except Exception:
+                outputs.append(
+                    {
+                        "prompt": prompt,
+                        "name": "",
+                        "parameters": {}
+                    }
+                )
+            else:
+                outputs.append(dict_json)
+            print(
+                f"Output:\n{json.dumps(outputs[-1], indent=4)}\n")
 
         with open(self.name_output_file, "w") as f:
             json.dump(outputs, f, indent=4)
             f.write("\n")
-        print(f"Total time: '{time.time() - init_time}'")
+        print(f"Total time: '{round(time.time() - init_time, 2)}' seconds")
 
     def make_base_helper(
             self

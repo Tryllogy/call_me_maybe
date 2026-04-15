@@ -1,16 +1,19 @@
 VENV := .venv
 PYTHON := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
+FUNCTIONS_DEFINITION := data/input/functions_definition.json
+FUNCTION_CALLING_TESTS := data/input/function_calling_tests.json
+OUTPUT := data/output/function_calls.json
+SRC_DIR := src
 
 run:
-	uv run $(PYTHON) -m src --functions_definition data/input/functions_definition.json --input data/input/function_calling_tests.json --output data/output/function_calls.json 
-
+	uv run python -m $(SRC_DIR) --functions_definition $(FUNCTIONS_DEFINITION) --input $(FUNCTION_CALLING_TESTS) --output $(OUTPUT)
+	
 help:
 	@echo "Available targets:"
-	@echo "  make venv       			- Create virtualenv using python3.13"
-	@echo "  make install    			- Install dependencies from requirements.txt"
-	@echo "  make run        			- Run the project (main.py)"
-	@echo "  make clean      			- Remove $(VENV)"
+	@echo "  make venv       			- Create virtualenv using uv"
+	@echo "  make install    			- Install dependencies from requirements.txt using uv"
+	@echo "  make run        			- Run the project with specified input and output"
+	@echo "  make clean      			- Remove $(VENV) and .mypy_cache"
 	@echo "  make lint         			- Run flake8 and mypy with standard checks"
 	@echo "  make lint-strict  			- Run flake8 and mypy with strict mode"
 
@@ -18,20 +21,19 @@ venv:
 	@if [ -d "$(VENV)" ]; then \
 		echo "Virtualenv exists at $(VENV)"; \
 	else \
-		python3.13 -m venv $(VENV) || python3 -m venv $(VENV); \
-		$(PIP) install --upgrade pip setuptools wheel || true; \
+		uv venv $(VENV); \
 	fi
 
 debug:
-	$(PYTHON) -m pdb $(MAIN_SCRIPT) $(FILE)
+	uv run python -m pdb src/__main__.py --functions_definition $(FUNCTIONS_DEFINITION) --input $(FUNCTION_CALLING_TESTS) --output $(OUTPUT)
 
 install: venv
 	@if [ -f requirements.txt ]; then \
-		$(PIP) install -r requirements.txt; \
+		uv pip install --python $(PYTHON) -r requirements.txt; \
 	else \
 		echo "No requirements.txt found; skipping."; \
 	fi
-	@echo "\nRun: source $(VENV)/bin/activate"
+	@echo "\nsource $(VENV)/bin/activate && make"
 
 lint:
 	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,llm_sdk
