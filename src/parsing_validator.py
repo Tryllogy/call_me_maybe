@@ -1,14 +1,15 @@
+from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 
 class ParsingValidator(BaseModel):
-    functions: list[dict] = Field(...)
-    input_data: list[dict] = Field(...)
+    functions: list[dict[str, Any]] = Field(...)
+    input_data: list[dict[str, Any]] = Field(...)
     name_output_file: str = Field(...)
 
     @field_validator("functions", mode="after")
     @classmethod
-    def check_functions(cls, data: list[dict]) -> None:
+    def check_functions(cls, data: list[dict[str, Any]]) -> None:
         for func in data:
             if not isinstance(func, dict):
                 raise TypeError("Each function must be a dictionary")
@@ -35,7 +36,7 @@ class ParsingValidator(BaseModel):
 
     @field_validator("input_data", mode="after")
     @classmethod
-    def check_input_data(cls, data: list[dict]) -> None:
+    def check_input_data(cls, data: list[dict[str, Any]]) -> None:
         for item in data:
             if not isinstance(item, dict):
                 raise TypeError("Each input data item must be a dictionary")

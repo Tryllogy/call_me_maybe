@@ -5,9 +5,6 @@ PIP := $(VENV)/bin/pip
 run:
 	uv run $(PYTHON) -m src --functions_definition data/input/functions_definition.json --input data/input/function_calling_tests.json --output data/output/function_calls.json 
 
-test:
-	uv run $(PYTHON) -m src --functions_definition data/input/functions_definition.json --input data/input/test.json --output data/output/function_calls.json 
-
 help:
 	@echo "Available targets:"
 	@echo "  make venv       			- Create virtualenv using python3.13"
@@ -37,13 +34,13 @@ install: venv
 	@echo "\nRun: source $(VENV)/bin/activate"
 
 lint:
-	flake8 . --exclude=.git,.venv,venv,env,test_vm,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,src,*.egg-info
+	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,llm_sdk
 	mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports \
-		--disallow-untyped-defs --check-untyped-defs --exclude='(build|dist|venv|env|dependencies|src)'
+		--disallow-untyped-defs --check-untyped-defs --exclude='(build|dist|venv|env|dependencies|llm_sdk)'
 
 lint-strict:
-	flake8 . --exclude=.git,.venv,venv,env,test_vm,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,src,*.egg-info
-	mypy . --strict --exclude='(build|dist|venv|env|dependencies|src)'
+	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,llm_sdk
+	mypy . --strict --exclude='(build|dist|venv|env|dependencies|llm_sdk)'
 
 clean:
 	rm -rf $(VENV)
