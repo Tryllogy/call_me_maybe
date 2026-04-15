@@ -5,7 +5,10 @@ FUNCTION_CALLING_TESTS := data/input/function_calling_tests.json
 OUTPUT := data/output/function_calls.json
 SRC_DIR := src
 
-run:
+install:
+	uv sync
+
+run: install
 	uv run python -m $(SRC_DIR) --functions_definition $(FUNCTIONS_DEFINITION) --input $(FUNCTION_CALLING_TESTS) --output $(OUTPUT)
 	
 help:
@@ -27,28 +30,15 @@ venv:
 debug:
 	uv run python -m pdb src/__main__.py --functions_definition $(FUNCTIONS_DEFINITION) --input $(FUNCTION_CALLING_TESTS) --output $(OUTPUT)
 
-install: venv
-	@if [ -f pyproject.toml ]; then \
-		uv sync --python $(PYTHON); \
-	else \
-		echo "No pyproject.toml found; skipping."; \
-	fi
-	@echo "\nsource $(VENV)/bin/activate && make"
-
 lint:
-	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,src/llm_sdk
-	mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports \
-		--disallow-untyped-defs --check-untyped-defs --exclude='(build|dist|venv|env|dependencies|llm_sdk)'
+	uv run flake8 $(SRC_DIR)/*.py
+	uv run mypy $(SRC_DIR)/*.py --warn-return-any --warn-unused-ignores --ignore-missing-imports --disallow-untyped-defs --check-untyped-defs
 
 lint-strict:
-	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,src/llm_sdk
-	mypy . --strict --exclude='(build|dist|venv|env|dependencies|llm_sdk)'
+	uv run flake8 $(SRC_DIR)/*.py
+	uv run mypy $(SRC_DIR)/*.py --strict
 
 clean:
-	rm -rf $(VENV)
-	rm -rf .mypy_cache
-	rm -rf .pytest_cache
-	rm -rf __pycache__
-	rm -rf data/output
+	rm -rf $(VENV) .mypy_cache .pytest_cache __pycache__ data/output
 
 .PHONY: help venv install run clean lint lint-strict
