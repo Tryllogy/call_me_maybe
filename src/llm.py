@@ -34,7 +34,8 @@ class LlmInterpret:
 
         ParsingValidator(
             functions=functions,
-            input_data=input_data
+            input_data=input_data,
+            name_output_file=name_output_file
         )
 
         return cls(
@@ -49,47 +50,38 @@ class LlmInterpret:
             path += parsed_file[i] + "/"
         os.makedirs(path, exist_ok=True)
         with open(self.name_output_file, "w") as f:
-            f.write("")
-
-    def torch_tensor_to_ids(
-        self,
-            tensor,
-            ids: list[int] = None
-    ) -> list[int]:
-        if ids is None:
-            ids: list = []
-        for digit in tensor[0]:
-            ids.append(int(digit))
-        return ids
+            f.write("[\n")
 
     def interpret(
             self
     ) -> None:
         base_helper: str = self.make_base_helper()
         tensor: Any = None
-        encoded_list = []
-        max_len: int = 0
 
-        for d in self.input_data:
+        init_time: float = time.time()
+        for i, d in enumerate(self.input_data):
+            time_input: float = time.time()
             input_helper: str = base_helper
+            dump = json.dumps(d["prompt"])
+            response: str = "{\n\"prompt\": " + dump + ", \
+                    \n  \"name\": \""
             input_helper += f"Prompt:\n{d['prompt']}\nAnswer:\n"
-            input_helper += "{\n\"prompt\": \"" + \
-                d['prompt'] + "\",\n  \"name\": \""
+            input_helper += response
             tensor = self.llm.encode(input_helper)
-            encoded_list.append(tensor[0])
-            if len(tensor[0]) > max_len:
-                max_len = len(tensor[0])
-
-        # with open(self.name_output_file, "a+") as f:
-        #     f.write("[\n")
-        #     for i, response in enumerate(responses):
-        #         dict_json: dict = self.make_dict_for_json(
-        #             response=response
-        #         )
-        #         json.dump(dict_json, f, indent=4)
-        #         if i != len(self.input_data) - 1:
-        #             f.write(",\n")
-        #     f.write("\n]")
+            response += self.generate_response(tensor)
+            print(
+                f"Total time for prompt {d['prompt']}: "
+                f"{time.time() - time_input}")
+            with open(self.name_output_file, "a+") as f:
+                dict_json: dict = self.make_dict_for_json(
+                    response=response
+                )
+                json.dump(dict_json, f, indent=4)
+                if i != len(self.input_data) - 1:
+                    f.write(",\n")
+                elif i == len(self.input_data) - 1:
+                    f.write("\n]")
+        print(f"Total time: '{time.time() - init_time}'")
 
     def make_base_helper(
             self
@@ -110,8 +102,23 @@ class LlmInterpret:
         base_helper += self.get_functions_name()
         return base_helper
 
-    def generate_response(self, batch_tensor) -> None:
-        pass
+    def generate_response(self, tensor) -> str:
+        response: list[int] = []
+        ids: list[int] = list(tensor[0])
+        n_brackets: int = 1
+        while 1:
+            logit: list[float] = self.llm.get_logits_from_input_ids(ids)
+            next_token_id: int = logit.index(max(logit))
+            ids.append(next_token_id)
+            response.append(next_token_id)
+            for c in self.llm.decode([next_token_id]):
+                if c == "{":
+                    n_brackets += 1
+                elif c == "}":
+                    n_brackets -= 1
+            if n_brackets == 0:
+                break
+        return self.llm.decode(response)
 
     def make_dict_for_json(
             self,

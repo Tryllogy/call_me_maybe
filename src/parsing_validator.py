@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, field_validator
 class ParsingValidator(BaseModel):
     functions: list[dict] = Field(...)
     input_data: list[dict] = Field(...)
+    name_output_file: str = Field(...)
 
     @field_validator("functions", mode="after")
     @classmethod
@@ -41,3 +42,12 @@ class ParsingValidator(BaseModel):
             if "prompt" not in item:
                 raise ValueError("Each input data item must have "
                                  "a 'prompt' key")
+
+    @field_validator("name_output_file", mode="after")
+    @classmethod
+    def check_name_output_file(cls, data: str) -> None:
+        if not isinstance(data, str):
+            raise TypeError("The name of the output file must be a string")
+        if not data.endswith(".json"):
+            raise ValueError(
+                "The name of the output file must end with '.json'")
