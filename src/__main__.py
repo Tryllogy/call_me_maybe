@@ -3,6 +3,14 @@ import sys
 
 
 def main() -> None:
+    """Run the command-line workflow for LLM function calling.
+
+    The program expects exactly three flag/value pairs:
+    ``--functions_definition``, ``--input``, and ``--output``.
+
+    Returns:
+        None.
+    """
     if len(sys.argv) != 7:
         print("Too few arguments, try", end=" ")
         print("--functions_definition <functions_definition>", end=" ")

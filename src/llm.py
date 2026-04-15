@@ -1,19 +1,40 @@
 import json
-from .parsing_validator import ParsingValidator
-from .output_validator import OutputValidator
-from .llm_sdk import Small_LLM_Model
 import os
 import time
 from typing import Any
 
+from .llm_sdk import Small_LLM_Model
+from .output_validator import OutputValidator
+from .parsing_validator import ParsingValidator
+
 
 class LlmInterpret:
+    """Interpret user prompts and produce validated function calls.
+
+    Attributes:
+        functions: Function definitions loaded from the input JSON file.
+        input_data: Prompt payloads to process.
+        llm: Loaded lightweight LLM backend.
+        name_output_file: Destination JSON path for generated outputs.
+        valid_names: Allowed function names extracted from definitions.
+    """
+
     def __init__(
         self,
         functions: list[dict[str, Any]],
         input_data: list[dict[str, Any]],
         name_output_file: str
     ) -> None:
+        """Initialize the interpreter with validated input payloads.
+
+        Args:
+            functions: Function specification list.
+            input_data: List of prompt dictionaries.
+            name_output_file: JSON output path.
+
+        Returns:
+            None.
+        """
 
         ParsingValidator(
             functions=functions,
@@ -36,6 +57,19 @@ class LlmInterpret:
         input_path_str: str,
         name_output_file: str
     ) -> "LlmInterpret":
+        """Build an interpreter instance from JSON files.
+
+        Args:
+            functions_path_str: Path to function definitions JSON file.
+            input_path_str: Path to prompt input JSON file.
+            name_output_file: Output file path for generated results.
+
+        Returns:
+            A configured ``LlmInterpret`` instance.
+
+        Raises:
+            ValueError: If one of the paths does not end with ``.json``.
+        """
 
         if not functions_path_str.endswith(".json") or \
                 not input_path_str.endswith(".json"):
@@ -55,6 +89,11 @@ class LlmInterpret:
             name_output_file=name_output_file)
 
     def create_output_file(self) -> None:
+        """Create the output JSON file and initialize it with an empty list.
+
+        Returns:
+            None.
+        """
         path: str = os.path.dirname(self.name_output_file)
         if path:
             os.makedirs(path, exist_ok=True)
@@ -64,6 +103,11 @@ class LlmInterpret:
     def interpret(
             self
     ) -> None:
+        """Generate and validate one function call per input prompt.
+
+        Returns:
+            None.
+        """
         base_helper: str = self.make_base_helper()
         tensor: Any = None
         outputs: list[dict[str, Any]] = []
@@ -115,6 +159,11 @@ class LlmInterpret:
     def make_base_helper(
             self
     ) -> str:
+        """Create the fixed instruction prefix sent to the model.
+
+        Returns:
+            The helper prompt describing output constraints.
+        """
         functions: list[dict[str, Any]] = []
         for function in self.functions:
             functions.append(
@@ -145,6 +194,14 @@ class LlmInterpret:
         self,
         tensor: Any
     ) -> str:
+        """Decode tokens greedily until top-level JSON braces are balanced.
+
+        Args:
+            tensor: Encoded model input tensor.
+
+        Returns:
+            Decoded response suffix appended after ``{"name":"``.
+        """
         response: list[int] = []
         ids: list[int] = list(tensor[0])
         n_brackets: int = 1
@@ -168,6 +225,15 @@ class LlmInterpret:
             response: str,
             prompt: str = "",
     ) -> dict[str, Any]:
+        """Convert model output text into the canonical output dictionary.
+
+        Args:
+            response: Raw JSON-like model response string.
+            prompt: Original user prompt.
+
+        Returns:
+            A dictionary with ``prompt``, ``name``, and ``parameters`` keys.
+        """
         dict_json: dict[str, Any] = {}
         parameters_function: dict[str, Any] = {}
         dict_json.update({"prompt": prompt})

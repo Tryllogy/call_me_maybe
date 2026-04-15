@@ -11,7 +11,7 @@ run:
 help:
 	@echo "Available targets:"
 	@echo "  make venv       			- Create virtualenv using uv"
-	@echo "  make install    			- Install dependencies from requirements.txt using uv"
+	@echo "  make install    			- Install dependencies from pyproject.toml using uv"
 	@echo "  make run        			- Run the project with specified input and output"
 	@echo "  make clean      			- Remove $(VENV) and .mypy_cache"
 	@echo "  make lint         			- Run flake8 and mypy with standard checks"
@@ -28,24 +28,27 @@ debug:
 	uv run python -m pdb src/__main__.py --functions_definition $(FUNCTIONS_DEFINITION) --input $(FUNCTION_CALLING_TESTS) --output $(OUTPUT)
 
 install: venv
-	@if [ -f requirements.txt ]; then \
-		uv pip install --python $(PYTHON) -r requirements.txt; \
+	@if [ -f pyproject.toml ]; then \
+		uv sync --python $(PYTHON); \
 	else \
-		echo "No requirements.txt found; skipping."; \
+		echo "No pyproject.toml found; skipping."; \
 	fi
 	@echo "\nsource $(VENV)/bin/activate && make"
 
 lint:
-	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,llm_sdk
+	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,src/llm_sdk
 	mypy . --warn-return-any --warn-unused-ignores --ignore-missing-imports \
 		--disallow-untyped-defs --check-untyped-defs --exclude='(build|dist|venv|env|dependencies|llm_sdk)'
 
 lint-strict:
-	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,llm_sdk
+	flake8 . --exclude=.git,.venv,venv,env,build,dist,.mypy_cache,.pytest_cache,__pycache__,dependencies,*.egg-info,src/llm_sdk
 	mypy . --strict --exclude='(build|dist|venv|env|dependencies|llm_sdk)'
 
 clean:
 	rm -rf $(VENV)
 	rm -rf .mypy_cache
+	rm -rf .pytest_cache
+	rm -rf __pycache__
+	rm -rf data/output
 
 .PHONY: help venv install run clean lint lint-strict
