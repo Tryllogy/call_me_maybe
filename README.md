@@ -30,17 +30,9 @@ The project is designed to solve a constrained function selection task: instead 
 
 ### Installation
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-If you prefer the provided Makefile workflow:
+Using the Makefile
 
 ```bash
-make install
-source <venv>/bin/activate
 make
 ```
 
@@ -60,8 +52,8 @@ The main entry point expects three arguments:
 Example using the bundled dataset:
 
 ```bash
-uv run python -m src [–functions_definition <function_definition_file>]
-[–input <input_file>] [–output <output_file>]
+uv run python -m src [--functions_definition <function_definition_file>]
+[--input <input_file>] [--output <output_file>]
 ```
 
 ```bash

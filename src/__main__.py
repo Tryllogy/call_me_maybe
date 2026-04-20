@@ -1,4 +1,5 @@
 from .llm import LlmInterpret
+import argparse
 import sys
 
 
@@ -7,21 +8,27 @@ def main() -> None:
 
     The program expects exactly three flag/value pairs:
     ``--functions_definition``, ``--input``, and ``--output``.
+    Base arguments are provided.
 
     Returns:
         None.
     """
-    if len(sys.argv) != 7:
-        print("Too few arguments, try", end=" ")
-        print("--functions_definition <functions_definition>", end=" ")
-        print("--input <input_data>", end=" ")
-        print("--output <output_file>")
-        return
+    llm: LlmInterpret
     try:
-        print("Mounting LlmInterpret")
-        llm: LlmInterpret = LlmInterpret.from_json(sys.argv[2],
-                                                   sys.argv[4], sys.argv[6])
-        print("Done")
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--functions_definition", type=str,
+                            default="data/input/functions_definition.json")
+        parser.add_argument("--input", type=str,
+                            default="data/input/function_calling_tests.json")
+        parser.add_argument("--output", type=str,
+                            default="data/output/function_calls.json")
+        arguments = parser.parse_args()
+        print(arguments.functions_definition)
+        llm = LlmInterpret.from_json(
+            functions_path_str=arguments.functions_definition,
+            input_path_str=arguments.input,
+            name_output_file=arguments.output
+        )
     except Exception as e:
         if hasattr(e, "errors"):
             for error in e.errors():
@@ -30,7 +37,10 @@ def main() -> None:
             print("Error:", e)
         sys.exit(1)
 
-    llm.interpret()
+    try:
+        llm.interpret()
+    except Exception as e:
+        print(f"Error: {e}")
     sys.exit(0)
 
 

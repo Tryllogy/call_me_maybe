@@ -3,9 +3,10 @@ import os
 import time
 from typing import Any
 
-from .llm_sdk import Small_LLM_Model
+from llm_sdk import Small_LLM_Model
 from .output_validator import OutputValidator
 from .parsing_validator import ParsingValidator
+from .prompt_validator import PromptValidator
 
 
 class LlmInterpret:
@@ -114,23 +115,33 @@ class LlmInterpret:
 
         init_time: float = time.time()
         for d in self.input_data:
-            time_input: float = time.time()
-            prompt: str = d["prompt"]
-            response_prefix: str = '{"name":"'
-            input_helper: str = (
-                f"{base_helper}\n"
-                f"User request:\n{prompt}\n"
-                f"JSON:\n{response_prefix}"
-            )
-            tensor = self.llm.encode(input_helper)
-            response: str = response_prefix + self.generate_response(tensor)
-            print(
-                f"Total time for prompt '{prompt}': "
-                f"{round(time.time() - time_input, 2)} seconds")
-            dict_json: dict[str, Any] = self.make_dict_for_json(
-                response=response,
-                prompt=prompt,
-            )
+            prompt: str
+            try:
+                PromptValidator(
+                    prompt=d["prompt"]
+                )
+            except Exception as e:
+                print(e)
+                prompt = "Invalid prompt"
+            else:
+                time_input: float = time.time()
+                prompt = d["prompt"]
+                response_prefix: str = '{"name":"'
+                input_helper: str = (
+                    f"{base_helper}\n"
+                    f"User request:\n{prompt}\n"
+                    f"JSON:\n{response_prefix}"
+                )
+                tensor = self.llm.encode(input_helper)
+                response: str = response_prefix + \
+                    self.generate_response(tensor)
+                print(
+                    f"Total time for prompt '{prompt}': "
+                    f"{round(time.time() - time_input, 2)} seconds")
+                dict_json: dict[str, Any] = self.make_dict_for_json(
+                    response=response,
+                    prompt=prompt,
+                )
             try:
                 OutputValidator(
                     prompt=prompt,
@@ -142,11 +153,14 @@ class LlmInterpret:
                 outputs.append(
                     {
                         "prompt": prompt,
-                        "name": "",
+                        "name": "Unknown function name",
                         "parameters": {}
                     }
                 )
             else:
+                for k, v in dict_json["parameters"].items():
+                    if isinstance(v, int):
+                        dict_json["parameters"][k] = float(v)
                 outputs.append(dict_json)
             print(
                 f"Output:\n{json.dumps(outputs[-1], indent=4)}\n")
@@ -192,7 +206,8 @@ class LlmInterpret:
 
     def generate_response(
         self,
-        tensor: Any
+        tensor: Any,
+        max_tokens: int = 200
     ) -> str:
         """Decode tokens greedily until top-level JSON braces are balanced.
 
@@ -204,6 +219,7 @@ class LlmInterpret:
         """
         response: list[int] = []
         ids: list[int] = list(tensor[0])
+        tokens: int = 0
         n_brackets: int = 1
         while True:
             logit: list[float] = self.llm.get_logits_from_input_ids(ids)
@@ -215,8 +231,8 @@ class LlmInterpret:
             decoded_token: str = self.llm.decode([next_token_id])
             n_brackets += decoded_token.count("{")
             n_brackets -= decoded_token.count("}")
-
-            if n_brackets == 0:
+            tokens += 1
+            if n_brackets == 0 or tokens >= max_tokens:
                 break
         return self.llm.decode(response)
 
