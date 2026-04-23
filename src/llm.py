@@ -2,6 +2,8 @@ import json
 import os
 import time
 from typing import Any
+import numpy as np
+from numpy.typing import NDArray
 
 from llm_sdk import Small_LLM_Model
 from .output_validator import OutputValidator
@@ -120,8 +122,7 @@ class LlmInterpret:
                 PromptValidator(
                     prompt=d["prompt"]
                 )
-            except Exception as e:
-                print(e)
+            except Exception:
                 prompt = "Invalid prompt"
             else:
                 time_input: float = time.time()
@@ -134,7 +135,7 @@ class LlmInterpret:
                 )
                 tensor = self.llm.encode(input_helper)
                 response: str = response_prefix + \
-                    self.generate_response(tensor)
+                    self.generate_response(tensor, prompt)
                 print(
                     f"Total time for prompt '{prompt}': "
                     f"{round(time.time() - time_input, 2)} seconds")
@@ -186,55 +187,179 @@ class LlmInterpret:
                     "parameters": function["parameters"],
                 }
             )
-
         base_helper: str = (
             "Choose exactly one function matching the user request.\n"
+            "Output must be valid JSON.\n"
+            "Return exactly one JSON object with exactly two keys: "
+            "\"name\" and \"parameters\".\n"
+            "No markdown, no prose, no extra keys.\n"
+            "The object must start with { and end with }.\n"
+            "The \"name\" value must match one allowed function.\n"
+            "The \"parameters\" value must be an object using only "
+            "parameters of the chosen function.\n"
+            "Example output:\n"
+            "{\n"
+            '  "name": "fn_greet",\n'
+            '  "parameters": {\n'
+            '    "name": "Josh"\n'
+            "  }\n"
+            "}\n"
+            "Choose the best function from the list below.\n"
+            "Allowed functions:\n"
         )
-        base_helper += (
-            "Return only one JSON object with keys name and parameters.\n"
-        )
-        base_helper += "No markdown and no extra text.\n"
-        base_helper += "name must be one of the function names below.\n"
-        base_helper += (
-            "parameters must be a JSON object with matching parameter "
-            "names.\n"
-        )
-        base_helper += "Start with { and end with }.\n"
-        base_helper += "Allowed functions:\n"
         base_helper += json.dumps(functions, separators=(",", ":"))
         return base_helper
 
     def generate_response(
         self,
         tensor: Any,
+        prompt: str,
         max_tokens: int = 200
     ) -> str:
-        """Decode tokens greedily until top-level JSON braces are balanced.
-
-        Args:
-            tensor: Encoded model input tensor.
-
-        Returns:
-            Decoded response suffix appended after ``{"name":"``.
-        """
         response: list[int] = []
         ids: list[int] = list(tensor[0])
         tokens: int = 0
-        n_brackets: int = 1
-        while True:
-            logit: list[float] = self.llm.get_logits_from_input_ids(ids)
-            next_token_id: int = logit.index(max(logit))
-
-            ids.append(next_token_id)
-            response.append(next_token_id)
-
-            decoded_token: str = self.llm.decode([next_token_id])
-            n_brackets += decoded_token.count("{")
-            n_brackets -= decoded_token.count("}")
-            tokens += 1
-            if n_brackets == 0 or tokens >= max_tokens:
-                break
+        state = "name_value"
+        name: list[int] = []
+        chosen_func: str = ""
+        param_key: list[int] = []
+        param_value: list[int] = []
+        av_tok_name: list[int] = self.get_available_tokens_name()
+        params_count: int = 0
+        while tokens <= max_tokens:
+            match state:
+                case "name_value":
+                    next_token_id = self.get_constrained_logit(
+                        av_tok_name, ids)
+                    name.append(next_token_id)
+                    ids.append(next_token_id)
+                    tokens += 1
+                    decoded_name: str = self.llm.decode(name)
+                    for valid_name in self.valid_names:
+                        if valid_name == decoded_name:
+                            response += name
+                            chosen_func = valid_name
+                            state = "after_name"
+                            break
+                case "after_name":
+                    after_name_ids: list[int] = list(
+                        self.llm.encode('",')[0])
+                    ids += after_name_ids
+                    response += after_name_ids
+                    tokens += len(after_name_ids)
+                    state = "parameters_start"
+                case "parameters_start":
+                    parameters_key_ids: list[int] = list(
+                        self.llm.encode('"parameters":{"')[0])
+                    ids += parameters_key_ids
+                    response += parameters_key_ids
+                    tokens += len(parameters_key_ids)
+                    state = "parameters_key"
+                case "parameters_key":
+                    av_tok_param_key: list[int] = \
+                        self.get_available_tokens_param_key(chosen_func)
+                    next_token_id = self.get_constrained_logit(
+                        av_tok_param_key, ids)
+                    param_key.append(next_token_id)
+                    ids.append(next_token_id)
+                    tokens += 1
+                    decoded_param_key: str = self.llm.decode(param_key)
+                    if decoded_param_key.endswith('"'):
+                        response += param_key
+                        state = "parameters_colon"
+                case "parameters_colon":
+                    colon_ids: list[int] = list(self.llm.encode(':')[0])
+                    ids += colon_ids
+                    response += colon_ids
+                    tokens += len(colon_ids)
+                    state = "parameters_value"
+                case "parameters_value":
+                    av_tok_param_value: list[int] = \
+                        self.get_available_tokens_param_value(prompt)
+                    next_token_id = self.get_constrained_logit(
+                        av_tok_param_value, ids)
+                    param_value.append(next_token_id)
+                    ids.append(next_token_id)
+                    tokens += 1
+                    decoded_param_value: str = self.llm.decode(param_value)
+                    if decoded_param_value.endswith('"'):
+                        response += param_value
+                        params_count += 1
+                        state = "check_end"
+                case "check_end":
+                    max_params: int = self.check_all_param_here(chosen_func)
+                    if params_count >= max_params:
+                        state = "end"
+                    else:
+                        comma_sep_ids: list[int] = list(
+                            self.llm.encode(',"')[0])
+                        ids += comma_sep_ids
+                        response += comma_sep_ids
+                        tokens += len(comma_sep_ids)
+                        param_key.clear()
+                        param_value.clear()
+                        state = "parameters_key"
+                case "end":
+                    end_json_ids: list[int] = list(
+                        self.llm.encode("}}")[0])
+                    response += end_json_ids
+                    break
         return self.llm.decode(response)
+
+    def check_all_param_here(self, func_name: str) -> int:
+        for func in self.functions:
+            if func["name"] == func_name:
+                return len(func["parameters"])
+        return 0
+
+    def get_constrained_logit(
+            self,
+            av_tokens: list[int],
+            ids: list[int]
+    ) -> int:
+        logits: NDArray[Any] = np.array(
+            self.llm.get_logits_from_input_ids(ids))
+        constrained_logits = np.full(
+            len(logits), -np.inf, dtype=float)
+        for token in av_tokens:
+            constrained_logits[token] = logits[token]
+        next_token_id: int = constrained_logits.argmax()
+        return next_token_id
+
+    def get_available_tokens_param_key(
+        self,
+        function_name: str,
+    ) -> list[int]:
+        available_tokens: Any = self.llm.encode(
+            '": '
+        )[0].tolist()
+
+        for function in self.functions:
+            if function["name"] == function_name:
+                for key, _ in function["parameters"].items():
+                    available_tokens.extend(self.llm.encode(key)[0].tolist())
+                break
+        return list(set(available_tokens))
+
+    def get_available_tokens_param_value(
+            self,
+            prompt: str
+    ) -> list[int]:
+        splited_prompt: list[str] = prompt.split()
+        available_tokens: Any = self.llm.encode(
+            '",.'
+        )[0].tolist()
+
+        for word in splited_prompt:
+            available_tokens.extend(self.llm.encode(word)[0].tolist())
+        return list(set(available_tokens))
+
+    def get_available_tokens_name(self) -> list[int]:
+        available_tokens: Any = self.llm.encode('",:{} ')[0].tolist()
+
+        for func_name in self.valid_names:
+            available_tokens.extend(self.llm.encode(func_name)[0].tolist())
+        return list(set(available_tokens))
 
     def make_dict_for_json(
             self,
