@@ -1,9 +1,9 @@
-from src.llm import LlmInterpret
-from src.parsing_validator import ParsingValidator
-from src.output_validator import OutputValidator
-from src.prompt_validator import PromptValidator
+from .llm import LlmInterpret
+from .output_validator import OutputValidator
+from .parsing_validator import ParsingValidator
+from .prompt_validator import PromptValidator
 
-__all__ = [
+__all__: list[str] = [
     "LlmInterpret",
     "ParsingValidator",
     "OutputValidator",

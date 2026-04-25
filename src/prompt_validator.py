@@ -2,21 +2,28 @@ from pydantic import BaseModel, field_validator
 
 
 class PromptValidator(BaseModel):
+    """Validate a single user prompt.
+
+    Attributes:
+        prompt: The prompt text received from the user.
+    """
+
     prompt: str
 
-    @field_validator('prompt', mode='after')
-    def validate_prompt(cls, v: str) -> None:
-        """
-        Validate the prompt.
+    @field_validator("prompt", mode="after")
+    @classmethod
+    def validate_prompt(cls, value: str) -> str:
+        """Ensure the prompt is not empty.
 
         Args:
-            v: The prompt string.
+            value: The prompt string.
 
         Returns:
-            None.
+            The validated prompt.
 
         Raises:
             ValueError: If the prompt is empty.
         """
-        if len(v) == 0:
+        if len(value) == 0:
             raise ValueError("Prompt cannot be empty")
+        return value

@@ -1,4 +1,5 @@
 from typing import Any
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -21,14 +22,17 @@ class ParsingValidator(BaseModel):
 
     @field_validator("functions", mode="after")
     @classmethod
-    def check_functions(cls, data: list[dict[str, Any]]) -> None:
+    def check_functions(
+        cls,
+        data: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Validate the function definition schema.
 
         Args:
             data: Function definition dictionaries.
 
         Returns:
-            None.
+            The validated function definitions.
 
         Raises:
             TypeError: If a function item is not a dictionary.
@@ -44,30 +48,43 @@ class ParsingValidator(BaseModel):
             if "parameters" not in func:
                 raise ValueError("Each function must have a 'parameters' key")
             if not isinstance(func["parameters"], dict):
-                raise ValueError("Each function's 'parameters' "
-                                 "must be a dictionary")
-            for p in func["parameters"]:
-                if "type" not in func["parameters"][p]:
-                    raise ValueError(f"Parameter '{p}' must have a 'type' key")
+                raise ValueError(
+                    "Each function's 'parameters' must be a dictionary"
+                )
+            for parameter_name, parameter_data in func["parameters"].items():
+                if not isinstance(parameter_data, dict):
+                    raise TypeError(
+                        "Each parameter definition must be a dictionary"
+                    )
+                if "type" not in parameter_data:
+                    raise ValueError(
+                        f"Parameter '{parameter_name}' must have a 'type' key"
+                    )
             if "returns" not in func:
                 raise ValueError("Each function must have a 'returns' key")
             if not isinstance(func["returns"], dict):
-                raise ValueError("Each function's 'returns' "
-                                 "must be a dictionary")
+                raise ValueError(
+                    "Each function's 'returns' must be a dictionary"
+                )
             if "type" not in func["returns"]:
                 raise ValueError(
-                    "Each function's 'returns' must have a 'type' key")
+                    "Each function's 'returns' must have a 'type' key"
+                )
+        return data
 
     @field_validator("input_data", mode="after")
     @classmethod
-    def check_input_data(cls, data: list[dict[str, Any]]) -> None:
+    def check_input_data(
+        cls,
+        data: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Validate prompt input payloads.
 
         Args:
             data: Prompt dictionaries.
 
         Returns:
-            None.
+            The validated prompt payloads.
 
         Raises:
             TypeError: If an input item is not a dictionary.
@@ -77,19 +94,21 @@ class ParsingValidator(BaseModel):
             if not isinstance(item, dict):
                 raise TypeError("Each input data item must be a dictionary")
             if "prompt" not in item:
-                raise ValueError("Each input data item must have "
-                                 "a 'prompt' key")
+                raise ValueError(
+                    "Each input data item must have a 'prompt' key"
+                )
+        return data
 
     @field_validator("name_output_file", mode="after")
     @classmethod
-    def check_name_output_file(cls, data: str) -> None:
+    def check_name_output_file(cls, data: str) -> str:
         """Validate the output file name.
 
         Args:
             data: Output file path string.
 
         Returns:
-            None.
+            The validated output file path.
 
         Raises:
             TypeError: If the output path is not a string.
@@ -99,4 +118,6 @@ class ParsingValidator(BaseModel):
             raise TypeError("The name of the output file must be a string")
         if not data.endswith(".json"):
             raise ValueError(
-                "The name of the output file must end with '.json'")
+                "The name of the output file must end with '.json'"
+            )
+        return data

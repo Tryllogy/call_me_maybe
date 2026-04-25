@@ -1,7 +1,8 @@
 import json
 import os
 import time
-from typing import Any
+from typing import Any, Optional
+
 import numpy as np
 from numpy.typing import NDArray
 
@@ -34,9 +35,6 @@ class LlmInterpret:
             functions: Function specification list.
             input_data: List of prompt dictionaries.
             name_output_file: JSON output path.
-
-        Returns:
-            None.
         """
 
         ParsingValidator(
@@ -49,9 +47,9 @@ class LlmInterpret:
         self.input_data: list[dict[str, Any]] = input_data
         self.llm: Small_LLM_Model = Small_LLM_Model()
         self.name_output_file: str = name_output_file
-        self.create_output_file()
         self.valid_names: list[str] = [function["name"]
                                        for function in functions]
+        self.create_output_file()
 
     @classmethod
     def from_json(
@@ -74,59 +72,55 @@ class LlmInterpret:
             ValueError: If one of the paths does not end with ``.json``.
         """
 
-        if not functions_path_str.endswith(".json") or \
-                not input_path_str.endswith(".json"):
+        if (
+            not functions_path_str.endswith(".json")
+            or not input_path_str.endswith(".json")
+        ):
             raise ValueError(
                 "The paths for functions and input data must end with '.json'"
             )
 
-        with open(functions_path_str, "r") as f:
-            functions: list[dict[str, Any]] = json.loads(f.read())
+        with open(functions_path_str, "r", encoding="utf-8") as file:
+            functions: list[dict[str, Any]] = json.loads(file.read())
 
-        with open(input_path_str, "r") as f:
-            input_data: list[dict[str, Any]] = json.loads(f.read())
+        with open(input_path_str, "r", encoding="utf-8") as file:
+            input_data: list[dict[str, Any]] = json.loads(file.read())
 
         return cls(
             functions=functions,
             input_data=input_data,
-            name_output_file=name_output_file)
+            name_output_file=name_output_file,
+        )
 
     def create_output_file(self) -> None:
-        """Create the output JSON file and initialize it with an empty list.
-
-        Returns:
-            None.
-        """
+        """Create the output JSON file and initialize it with an empty list."""
         path: str = os.path.dirname(self.name_output_file)
         if path:
             os.makedirs(path, exist_ok=True)
-        with open(self.name_output_file, "w") as f:
-            f.write("[]\n")
+        with open(self.name_output_file, "w", encoding="utf-8") as file:
+            file.write("[]\n")
 
-    def interpret(
-            self
-    ) -> None:
-        """Generate and validate one function call per input prompt.
-
-        Returns:
-            None.
-        """
+    def interpret(self) -> None:
+        """Generate and validate one function call per input prompt."""
         base_helper: str = self.make_base_helper()
         tensor: Any = None
         outputs: list[dict[str, Any]] = []
 
         init_time: float = time.time()
-        for d in self.input_data:
-            prompt: str
+        for data in self.input_data:
+            prompt: str = "Invalid prompt"
+            dict_json: dict[str, Any] = {
+                "prompt": prompt,
+                "name": "Unknown function name",
+                "parameters": {},
+            }
             try:
-                PromptValidator(
-                    prompt=d["prompt"]
-                )
+                PromptValidator(prompt=data["prompt"])
             except Exception:
                 prompt = "Invalid prompt"
             else:
                 time_input: float = time.time()
-                prompt = d["prompt"]
+                prompt = data["prompt"]
                 response_prefix: str = '{"name":"'
                 input_helper: str = (
                     f"{base_helper}\n"
@@ -138,47 +132,41 @@ class LlmInterpret:
                     self.generate_response(tensor, prompt)
                 print(
                     f"Total time for prompt '{prompt}': "
-                    f"{round(time.time() - time_input, 2)} seconds")
-                dict_json: dict[str, Any] = self.make_dict_for_json(
+                    f"{round(time.time() - time_input, 2)} seconds"
+                )
+                dict_json = self.make_dict_for_json(
                     response=response,
                     prompt=prompt,
                 )
-            try:
-                OutputValidator(
-                    prompt=prompt,
-                    name=dict_json["name"],
-                    parameters=dict_json["parameters"],
-                    valid_names=self.valid_names
-                )
-            except Exception:
-                outputs.append(
-                    {
+                try:
+                    OutputValidator(
+                        prompt=prompt,
+                        name=dict_json["name"],
+                        parameters=dict_json["parameters"],
+                        valid_names=self.valid_names,
+                    )
+                except Exception:
+                    dict_json = {
                         "prompt": prompt,
                         "name": "Unknown function name",
-                        "parameters": {}
+                        "parameters": {},
                     }
-                )
-            else:
-                for k, v in dict_json["parameters"].items():
-                    if isinstance(v, int):
-                        dict_json["parameters"][k] = float(v)
-                outputs.append(dict_json)
+                else:
+                    for key, value in dict_json["parameters"].items():
+                        if isinstance(value, int):
+                            dict_json["parameters"][key] = float(value)
+            outputs.append(dict_json)
             print(
-                f"Output:\n{json.dumps(outputs[-1], indent=4)}\n")
+                f"Output:\n{json.dumps(outputs[-1], indent=4)}\n"
+            )
 
-        with open(self.name_output_file, "w") as f:
-            json.dump(outputs, f, indent=4)
-            f.write("\n")
+        with open(self.name_output_file, "w", encoding="utf-8") as file:
+            json.dump(outputs, file, indent=4)
+            file.write("\n")
         print(f"Total time: '{round(time.time() - init_time, 2)}' seconds")
 
-    def make_base_helper(
-            self
-    ) -> str:
-        """Create the fixed instruction prefix sent to the model.
-
-        Returns:
-            The helper prompt describing output constraints.
-        """
+    def make_base_helper(self) -> str:
+        """Create the fixed instruction prefix sent to the model."""
         functions: list[dict[str, Any]] = []
         for function in self.functions:
             functions.append(
@@ -216,16 +204,35 @@ class LlmInterpret:
         prompt: str,
         max_tokens: int = 200
     ) -> str:
+        """Generate a constrained JSON response for one prompt.
+
+        Args:
+            tensor: Tokenized prompt prefix produced by the model encoder.
+            prompt: Original user prompt.
+            max_tokens: Maximum number of decoding steps to perform.
+
+        Returns:
+            The decoded JSON-like function call.
+        """
         response: list[int] = []
         ids: list[int] = list(tensor[0])
         tokens: int = 0
-        state = "name_value"
+        state: str = "name_value"
         name: list[int] = []
         chosen_func: str = ""
         param_key: list[int] = []
         param_value: list[int] = []
         av_tok_name: list[int] = self.get_available_tokens_name()
         params_count: int = 0
+        next_token_id: int = 0
+        after_name_ids: list[int] = list(self.llm.encode('",')[0])
+        parameters_key_ids: list[int] = list(
+            self.llm.encode('"parameters":{"')[0]
+        )
+        av_tok_param_key: Optional[list[int]] = None
+        colon_ids: list[int] = list(self.llm.encode(':"')[0])
+        av_tok_param_value: Optional[list[int]] = None
+        end_json_ids: list[int] = list(self.llm.encode("}}")[0])
         while tokens <= max_tokens:
             match state:
                 case "name_value":
@@ -242,22 +249,19 @@ class LlmInterpret:
                             state = "after_name"
                             break
                 case "after_name":
-                    after_name_ids: list[int] = list(
-                        self.llm.encode('",')[0])
                     ids += after_name_ids
                     response += after_name_ids
                     tokens += len(after_name_ids)
                     state = "parameters_start"
                 case "parameters_start":
-                    parameters_key_ids: list[int] = list(
-                        self.llm.encode('"parameters":{"')[0])
                     ids += parameters_key_ids
                     response += parameters_key_ids
                     tokens += len(parameters_key_ids)
                     state = "parameters_key"
                 case "parameters_key":
-                    av_tok_param_key: list[int] = \
-                        self.get_available_tokens_param_key(chosen_func)
+                    if av_tok_param_key is None:
+                        av_tok_param_key = \
+                            self.get_available_tokens_param_key(chosen_func)
                     next_token_id = self.get_constrained_logit(
                         av_tok_param_key, ids)
                     param_key.append(next_token_id)
@@ -268,14 +272,14 @@ class LlmInterpret:
                         response += param_key
                         state = "parameters_colon"
                 case "parameters_colon":
-                    colon_ids: list[int] = list(self.llm.encode(':')[0])
                     ids += colon_ids
                     response += colon_ids
                     tokens += len(colon_ids)
                     state = "parameters_value"
                 case "parameters_value":
-                    av_tok_param_value: list[int] = \
-                        self.get_available_tokens_param_value(prompt)
+                    if av_tok_param_value is None:
+                        av_tok_param_value = \
+                            self.get_available_tokens_param_value(prompt)
                     next_token_id = self.get_constrained_logit(
                         av_tok_param_value, ids)
                     param_value.append(next_token_id)
@@ -300,16 +304,22 @@ class LlmInterpret:
                         param_value.clear()
                         state = "parameters_key"
                 case "end":
-                    end_json_ids: list[int] = list(
-                        self.llm.encode("}}")[0])
                     response += end_json_ids
                     break
-        return self.llm.decode(response)
+        return str(self.llm.decode(response))
 
     def check_all_param_here(self, func_name: str) -> int:
-        for func in self.functions:
-            if func["name"] == func_name:
-                return len(func["parameters"])
+        """Return the number of parameters expected by a function.
+
+        Args:
+            func_name: Name of the function being generated.
+
+        Returns:
+            The number of parameters for the matching function, or 0.
+        """
+        for function in self.functions:
+            if function["name"] == func_name:
+                return len(function["parameters"])
         return 0
 
     def get_constrained_logit(
@@ -317,22 +327,40 @@ class LlmInterpret:
             av_tokens: list[int],
             ids: list[int]
     ) -> int:
+        """Select the highest-scoring token among the allowed tokens.
+
+        Args:
+            av_tokens: Token ids allowed at the current decoding step.
+            ids: Current token sequence.
+
+        Returns:
+            The selected token id.
+        """
         logits: NDArray[Any] = np.array(
             self.llm.get_logits_from_input_ids(ids))
-        constrained_logits = np.full(
-            len(logits), -np.inf, dtype=float)
+        constrained_logits: NDArray[Any] = np.full(
+            len(logits),
+            -np.inf,
+            dtype=float,
+        )
         for token in av_tokens:
             constrained_logits[token] = logits[token]
-        next_token_id: int = constrained_logits.argmax()
-        return next_token_id
+        next_token_id: np.int64 = constrained_logits.argmax()
+        return int(next_token_id)
 
     def get_available_tokens_param_key(
         self,
         function_name: str,
     ) -> list[int]:
-        available_tokens: Any = self.llm.encode(
-            '": '
-        )[0].tolist()
+        """Return token ids allowed for a parameter key.
+
+        Args:
+            function_name: Name of the selected function.
+
+        Returns:
+            A deduplicated list of token ids.
+        """
+        available_tokens: list[int] = self.llm.encode('"')[0].tolist()
 
         for function in self.functions:
             if function["name"] == function_name:
@@ -345,17 +373,31 @@ class LlmInterpret:
             self,
             prompt: str
     ) -> list[int]:
-        splited_prompt: list[str] = prompt.split()
-        available_tokens: Any = self.llm.encode(
-            '",.'
-        )[0].tolist()
+        """Return token ids allowed for a parameter value.
 
-        for word in splited_prompt:
+        Args:
+            prompt: Original user prompt.
+
+        Returns:
+            A deduplicated list of token ids.
+        """
+        available_tokens: list[int] = self.llm.encode('"[]\\/')[0].tolist()
+        available_tokens.extend(self.llm.encode(" ")[0].tolist())
+        available_tokens.extend(self.llm.encode(prompt)[0].tolist())
+        split_prompt: list[str] = prompt.split()
+        for word in split_prompt:
             available_tokens.extend(self.llm.encode(word)[0].tolist())
+            available_tokens.extend(self.llm.encode(f" {word}")[0].tolist())
+
         return list(set(available_tokens))
 
     def get_available_tokens_name(self) -> list[int]:
-        available_tokens: Any = self.llm.encode('",:{} ')[0].tolist()
+        """Return token ids allowed for a function name.
+
+        Returns:
+            A deduplicated list of token ids.
+        """
+        available_tokens: list[int] = self.llm.encode('",:{} ')[0].tolist()
 
         for func_name in self.valid_names:
             available_tokens.extend(self.llm.encode(func_name)[0].tolist())
@@ -375,11 +417,11 @@ class LlmInterpret:
         Returns:
             A dictionary with ``prompt``, ``name``, and ``parameters`` keys.
         """
-        dict_json: dict[str, Any] = {}
-        parameters_function: dict[str, Any] = {}
-        dict_json.update({"prompt": prompt})
-        dict_json.update({"name": ""})
-        dict_json.update({"parameters": {}})
+        dict_json: dict[str, Any] = {
+            "prompt": prompt,
+            "name": "",
+            "parameters": {},
+        }
         try:
             response_dict: dict[str, Any] = json.loads(response)
             if response_dict.get("prompt"):
@@ -387,8 +429,7 @@ class LlmInterpret:
             if response_dict.get("name"):
                 dict_json.update({"name": response_dict["name"]})
             if response_dict.get("parameters"):
-                parameters_function = response_dict["parameters"]
-                dict_json["parameters"] = parameters_function
+                dict_json["parameters"] = response_dict["parameters"]
         except json.JSONDecodeError:
             return dict_json
         return dict_json
