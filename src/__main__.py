@@ -38,11 +38,11 @@ def main() -> None:
             print("Error:", exc)
         sys.exit(1)
 
-    try:
-        llm.interpret()
-    except Exception as exc:
-        print(f"Error: {exc}")
-    sys.exit(0)
+    # try:
+    llm.interpret()
+    # except Exception as exc:
+    #     print(f"Error: {exc}")
+    # sys.exit(0)
 
 
 if __name__ == "__main__":

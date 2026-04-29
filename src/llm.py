@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 import json
 import os
 import time
@@ -185,13 +186,6 @@ class LlmInterpret:
             "The \"name\" value must match one allowed function.\n"
             "The \"parameters\" value must be an object using only "
             "parameters of the chosen function.\n"
-            "Example output:\n"
-            "{\n"
-            '  "name": "fn_greet",\n'
-            '  "parameters": {\n'
-            '    "name": "Josh"\n'
-            "  }\n"
-            "}\n"
             "Choose the best function from the list below.\n"
             "Allowed functions:\n"
         )
@@ -218,90 +212,83 @@ class LlmInterpret:
         ids: list[int] = list(tensor[0])
         tokens: int = 0
         state: str = "name_value"
-        name: list[int] = []
-        chosen_func: str = ""
         param_key: list[int] = []
         param_value: list[int] = []
         av_tok_name: list[int] = self.get_available_tokens_name()
         params_count: int = 0
-        next_token_id: int = 0
-        after_name_ids: list[int] = list(self.llm.encode('",')[0])
-        parameters_key_ids: list[int] = list(
-            self.llm.encode('"parameters":{"')[0]
-        )
         av_tok_param_key: Optional[list[int]] = None
-        colon_ids: list[int] = list(self.llm.encode(':"')[0])
         av_tok_param_value: Optional[list[int]] = None
+        current_param_type: Optional[str] = None
         end_json_ids: list[int] = list(self.llm.encode("}}")[0])
+        name_processor: NameJSON = NameJSON(
+            ids=ids,
+            valid_names=self.valid_names,
+            llm=self.llm
+        )
+        param_processor: ParametersJSON = ParametersJSON(
+            ids=ids,
+            llm=self.llm
+        )
         while tokens <= max_tokens:
             match state:
                 case "name_value":
-                    next_token_id = self.get_constrained_logit(
-                        av_tok_name, ids)
-                    name.append(next_token_id)
-                    ids.append(next_token_id)
-                    tokens += 1
-                    decoded_name: str = self.llm.decode(name)
-                    for valid_name in self.valid_names:
-                        if valid_name == decoded_name:
-                            response += name
-                            chosen_func = valid_name
-                            state = "after_name"
-                            break
-                case "after_name":
-                    ids += after_name_ids
-                    response += after_name_ids
-                    tokens += len(after_name_ids)
+                    name: str = (name_processor.process(
+                        av_tokens=av_tok_name))
+                    end_of_line: list[int] = name_processor.end_of_line()
+                    param_processor.chosen_func = name_processor.decoded_name
+                    response += name
+                    response += end_of_line
+                    ids = name_processor.ids
+                    tokens += name_processor.tokens
                     state = "parameters_start"
                 case "parameters_start":
-                    ids += parameters_key_ids
+                    parameters_key_ids = param_processor.put_start()
                     response += parameters_key_ids
-                    tokens += len(parameters_key_ids)
+                    ids = param_processor.ids
+                    tokens += param_processor.tokens
                     state = "parameters_key"
                 case "parameters_key":
                     if av_tok_param_key is None:
                         av_tok_param_key = \
-                            self.get_available_tokens_param_key(chosen_func)
-                    next_token_id = self.get_constrained_logit(
-                        av_tok_param_key, ids)
-                    param_key.append(next_token_id)
-                    ids.append(next_token_id)
-                    tokens += 1
-                    decoded_param_key: str = self.llm.decode(param_key)
-                    if decoded_param_key.endswith('"'):
-                        response += param_key
-                        state = "parameters_colon"
-                case "parameters_colon":
-                    ids += colon_ids
-                    response += colon_ids
-                    tokens += len(colon_ids)
+                            self.get_available_tokens_param_key(
+                                param_processor.chosen_func)
+                    param_key = param_processor.process(av_tok_param_key)
+                    current_param_name: str = self.llm.decode(param_key)
+                    current_param_type = self.get_parameter_type(
+                        function_name=param_processor.chosen_func,
+                        parameter_name=current_param_name.strip('"'),
+                    )
+                    param_colon = param_processor.end_of_line()
+                    response += param_key
+                    response += param_colon
+                    ids = param_processor.ids
+                    tokens += param_processor.tokens
                     state = "parameters_value"
                 case "parameters_value":
-                    if av_tok_param_value is None:
-                        av_tok_param_value = \
-                            self.get_available_tokens_param_value(prompt)
-                    next_token_id = self.get_constrained_logit(
-                        av_tok_param_value, ids)
-                    param_value.append(next_token_id)
-                    ids.append(next_token_id)
-                    tokens += 1
-                    decoded_param_value: str = self.llm.decode(param_value)
-                    if decoded_param_value.endswith('"'):
-                        response += param_value
-                        params_count += 1
-                        state = "check_end"
+                    av_tok_param_value = self.get_available_tokens_param_value(
+                        prompt=prompt,
+                        ids=ids,
+                        parameter_type=current_param_type,
+                    )
+                    param_value = param_processor.process(av_tok_param_value)
+                    response += param_value
+                    ids = param_processor.ids
+                    tokens += param_processor.tokens
+                    params_count += 1
+                    state = "check_end"
                 case "check_end":
-                    max_params: int = self.check_all_param_here(chosen_func)
+                    max_params: int = self.check_all_param_here(
+                        name_processor.decoded_name)
                     if params_count >= max_params:
                         state = "end"
                     else:
+                        av_tok_param_value = None
+                        current_param_type = None
                         comma_sep_ids: list[int] = list(
                             self.llm.encode(',"')[0])
                         ids += comma_sep_ids
                         response += comma_sep_ids
                         tokens += len(comma_sep_ids)
-                        param_key.clear()
-                        param_value.clear()
                         state = "parameters_key"
                 case "end":
                     response += end_json_ids
@@ -321,32 +308,6 @@ class LlmInterpret:
             if function["name"] == func_name:
                 return len(function["parameters"])
         return 0
-
-    def get_constrained_logit(
-            self,
-            av_tokens: list[int],
-            ids: list[int]
-    ) -> int:
-        """Select the highest-scoring token among the allowed tokens.
-
-        Args:
-            av_tokens: Token ids allowed at the current decoding step.
-            ids: Current token sequence.
-
-        Returns:
-            The selected token id.
-        """
-        logits: NDArray[Any] = np.array(
-            self.llm.get_logits_from_input_ids(ids))
-        constrained_logits: NDArray[Any] = np.full(
-            len(logits),
-            -np.inf,
-            dtype=float,
-        )
-        for token in av_tokens:
-            constrained_logits[token] = logits[token]
-        next_token_id: np.int64 = constrained_logits.argmax()
-        return int(next_token_id)
 
     def get_available_tokens_param_key(
         self,
@@ -371,16 +332,29 @@ class LlmInterpret:
 
     def get_available_tokens_param_value(
             self,
-            prompt: str
+            prompt: str,
+            ids: list[int],
+            parameter_type: Optional[str] = None,
     ) -> list[int]:
         """Return token ids allowed for a parameter value.
 
         Args:
             prompt: Original user prompt.
+            ids: Current token sequence used to infer the vocabulary size.
+            parameter_type: Current parameter type, when known.
 
         Returns:
             A deduplicated list of token ids.
         """
+        if parameter_type == "string":
+            vocab_size: int = len(self.llm.get_logits_from_input_ids(ids))
+            available_tokens: list[int] = []
+            for token_id in range(vocab_size):
+                token_text: str = self.llm.decode([token_id])
+                if "}" not in token_text and "/" not in token_text:
+                    available_tokens.append(token_id)
+            return available_tokens
+
         available_tokens: list[int] = self.llm.encode('"[]\\/')[0].tolist()
         available_tokens.extend(self.llm.encode(" ")[0].tolist())
         available_tokens.extend(self.llm.encode(prompt)[0].tolist())
@@ -390,6 +364,23 @@ class LlmInterpret:
             available_tokens.extend(self.llm.encode(f" {word}")[0].tolist())
 
         return list(set(available_tokens))
+
+    def get_parameter_type(
+        self,
+        function_name: str,
+        parameter_name: str,
+    ) -> Optional[str]:
+        """Return the declared type for a parameter of the chosen function."""
+        for function in self.functions:
+            if function["name"] != function_name:
+                continue
+            parameter_data: Any = function["parameters"].get(parameter_name)
+            if isinstance(parameter_data, dict):
+                parameter_type: Any = parameter_data.get("type")
+                if isinstance(parameter_type, str):
+                    return parameter_type
+            break
+        return None
 
     def get_available_tokens_name(self) -> list[int]:
         """Return token ids allowed for a function name.
@@ -429,7 +420,166 @@ class LlmInterpret:
             if response_dict.get("name"):
                 dict_json.update({"name": response_dict["name"]})
             if response_dict.get("parameters"):
-                dict_json["parameters"] = response_dict["parameters"]
+                for key, value in response_dict["parameters"].items():
+                    if all(c.isdigit() for c in value):
+                        dict_json["parameters"][key] = float(value)
+                    elif value.upper() == "TRUE":
+                        dict_json["parameters"][key] = True
+                    elif value.upper() == "FALSE":
+                        dict_json["parameters"][key] = False
+                    else:
+                        dict_json["parameters"][key] = response_dict["parameters"][key]
         except json.JSONDecodeError:
             return dict_json
         return dict_json
+
+
+class ProcessorJSON(ABC):
+    """Process the generated function call dictionaries as needed.
+
+    This class can be extended to perform additional processing on the
+    generated outputs, such as executing the function calls or transforming
+    the parameters before saving.
+    """
+
+    def __init__(self, llm: Small_LLM_Model) -> None:
+        self.llm: Small_LLM_Model = llm
+
+    @abstractmethod
+    def process(self, av_tokens: list[int]) -> Any:
+        """Process a single function call dictionary.
+
+        Args:
+            av_tokens: A list of allowed token ids.
+
+        Returns:
+            A processed dictionary, potentially modified or enriched.
+        """
+        pass
+
+    @abstractmethod
+    def end_of_line(
+        self
+    ) -> Any:
+        """Perform any necessary finalization after processing is complete.
+
+        Returns:
+            Any final output or cleanup result.
+        """
+        pass
+
+    def get_constrained_logit(
+            self,
+            av_tokens: list[int],
+            ids: list[int]
+    ) -> int:
+        """Select the highest-scoring token among the allowed tokens.
+
+        Args:
+            av_tokens: Token ids allowed at the current decoding step.
+            ids: Current token sequence.
+
+        Returns:
+            The selected token id.
+        """
+        logits: NDArray[Any] = np.array(
+            self.llm.get_logits_from_input_ids(ids))
+        constrained_logits: NDArray[Any] = np.full(
+            len(logits),
+            -np.inf,
+            dtype=float,
+        )
+        for token in av_tokens:
+            constrained_logits[token] = logits[token]
+        next_token_id: np.int64 = constrained_logits.argmax()
+        return int(next_token_id)
+
+
+class NameJSON(ProcessorJSON):
+    max_tokens: int = 50
+
+    def __init__(
+            self,
+            ids: list[int],
+            valid_names: list[str],
+            llm: Small_LLM_Model
+    ) -> None:
+        super().__init__(llm)
+        self.name: list[int] = []
+        self.ids: list[int] = ids
+        self.valid_names: list[str] = valid_names
+        self.decoded_name: str = ""
+        self.tokens: int = 0
+
+    def process(
+            self,
+            av_tokens: list[int]
+    ) -> Any:
+        while self.tokens <= NameJSON.max_tokens:
+            next_token_id: int = self.get_constrained_logit(
+                av_tokens, self.ids)
+            self.name.append(next_token_id)
+            self.ids.append(next_token_id)
+            self.tokens += 1
+            decoded_name: str = self.llm.decode(self.name)
+
+            for valid_name in self.valid_names:
+                if valid_name == decoded_name:
+                    self.decoded_name = decoded_name
+                    return self.name
+        return self.name
+
+    def end_of_line(
+            self
+    ) -> Any:
+        after_name_ids: list[int] = list(self.llm.encode('",')[0])
+        self.ids += after_name_ids
+        self.tokens += len(after_name_ids)
+        return after_name_ids
+
+
+class ParametersJSON(ProcessorJSON):
+    max_tokens: int = 200
+
+    def __init__(
+            self,
+            ids: list[int],
+            llm: Small_LLM_Model
+    ) -> None:
+        super().__init__(llm)
+        self.param: list[int] = []
+        self.ids: list[int] = ids
+        self.tokens: int = 0
+
+    def put_start(self) -> Any:
+        parameters_key_ids: list[int] = list(
+            self.llm.encode('"parameters":{"')[0]
+        )
+        self.ids += parameters_key_ids
+        return parameters_key_ids
+
+    def process(
+            self,
+            av_tokens: list[int]
+    ) -> Any:
+        self.param = []
+        while self.tokens <= ParametersJSON.max_tokens:
+            next_token_id: int = self.get_constrained_logit(
+                av_tokens, self.ids)
+            self.param.append(next_token_id)
+            self.ids.append(next_token_id)
+            self.tokens += 1
+            decoded_param: str = self.llm.decode(self.param)
+            if decoded_param.endswith('"'):
+                inverted_decoded_param: str = decoded_param[::-1]
+                for i, char in enumerate(inverted_decoded_param):
+                    if char == ",":
+                        return self.llm.encode(decoded_param[:len(decoded_param)-i-1])[0].tolist()
+                return self.param
+        return self.param
+
+    def end_of_line(self):
+        colon_ids: list[int] = list(self.llm.encode(':"')[0])
+        self.ids += colon_ids
+        self.tokens += len(colon_ids)
+        return colon_ids
