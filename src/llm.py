@@ -167,7 +167,11 @@ class LlmInterpret:
         print(f"Total time: '{round(time.time() - init_time, 2)}' seconds")
 
     def make_base_helper(self) -> str:
-        """Create the fixed instruction prefix sent to the model."""
+        """Create the fixed instruction prefix sent to the model.
+
+        Returns:
+            A string containing the base helper instructions and function list.
+        """
         functions: list[dict[str, Any]] = []
         for function in self.functions:
             functions.append(
@@ -217,7 +221,6 @@ class LlmInterpret:
         av_tok_name: list[int] = self.get_available_tokens_name()
         params_count: int = 0
         av_tok_param_key: Optional[list[int]] = None
-        av_tok_param_value: Optional[list[int]] = None
         current_param_type: Optional[str] = None
         end_json_ids: list[int] = list(self.llm.encode("}}")[0])
         name_processor: NameJSON = NameJSON(
@@ -293,6 +296,7 @@ class LlmInterpret:
                 case "end":
                     response += end_json_ids
                     break
+        print("Final decoded response:", self.llm.decode(response))
         return str(self.llm.decode(response))
 
     def check_all_param_here(self, func_name: str) -> int:
@@ -351,7 +355,8 @@ class LlmInterpret:
             available_tokens: list[int] = []
             for token_id in range(vocab_size):
                 token_text: str = self.llm.decode([token_id])
-                if "}" not in token_text and "/" not in token_text:
+                if "}" not in token_text and "/" not in token_text \
+                        and "{" not in token_text:
                     available_tokens.append(token_id)
             return available_tokens
 
@@ -428,7 +433,8 @@ class LlmInterpret:
                     elif value.upper() == "FALSE":
                         dict_json["parameters"][key] = False
                     else:
-                        dict_json["parameters"][key] = response_dict["parameters"][key]
+                        dict_json["parameters"][
+                            key] = response_dict["parameters"][key]
         except json.JSONDecodeError:
             return dict_json
         return dict_json
@@ -539,7 +545,7 @@ class NameJSON(ProcessorJSON):
 
 
 class ParametersJSON(ProcessorJSON):
-    max_tokens: int = 200
+    max_tokens: int = 100
 
     def __init__(
             self,
@@ -573,8 +579,11 @@ class ParametersJSON(ProcessorJSON):
             if decoded_param.endswith('"'):
                 inverted_decoded_param: str = decoded_param[::-1]
                 for i, char in enumerate(inverted_decoded_param):
-                    if char == ",":
-                        return self.llm.encode(decoded_param[:len(decoded_param)-i-1])[0].tolist()
+                    if char == "," and inverted_decoded_param[i+1] == '"':
+                        print(f"Returning parameter value: '{decoded_param[:len(decoded_param)-i-1]}'")
+                        return self.llm.encode(
+                            decoded_param[:len(decoded_param)-i-1])[0].tolist()
+                print(f"Returning not truncated: '{decoded_param}'")
                 return self.param
         return self.param
 
