@@ -94,7 +94,11 @@ class LlmInterpret:
         )
 
     def create_output_file(self) -> None:
-        """Create the output JSON file and initialize it with an empty list."""
+        """Create the output JSON file and initialize it with an empty list.
+
+        Returns:
+            None. The file is created on disk with an empty JSON array.
+        """
         path: str = os.path.dirname(self.name_output_file)
         if path:
             os.makedirs(path, exist_ok=True)
@@ -102,7 +106,11 @@ class LlmInterpret:
             file.write("[]\n")
 
     def interpret(self) -> None:
-        """Generate and validate one function call per input prompt."""
+        """Generate and validate one function call per input prompt.
+
+        Returns:
+            None. The generated function calls are saved to the output file.
+        """
         base_helper: str = self.make_base_helper()
         tensor: Any = None
         outputs: list[dict[str, Any]] = []
@@ -235,7 +243,7 @@ class LlmInterpret:
         while tokens <= max_tokens:
             match state:
                 case "name_value":
-                    name: str = (name_processor.process(
+                    name: list[int] = (name_processor.process(
                         av_tokens=av_tok_name))
                     end_of_line: list[int] = name_processor.end_of_line()
                     param_processor.chosen_func = name_processor.decoded_name
@@ -268,7 +276,8 @@ class LlmInterpret:
                     tokens += param_processor.tokens
                     state = "parameters_value"
                 case "parameters_value":
-                    av_tok_param_value = self.get_available_tokens_param_value(
+                    av_tok_param_value: list[
+                        int] = self.get_available_tokens_param_value(
                         prompt=prompt,
                         ids=ids,
                         parameter_type=current_param_type,
@@ -285,7 +294,7 @@ class LlmInterpret:
                     if params_count >= max_params:
                         state = "end"
                     else:
-                        av_tok_param_value = None
+                        av_tok_param_value = []
                         current_param_type = None
                         comma_sep_ids: list[int] = list(
                             self.llm.encode(',"')[0])
@@ -296,7 +305,6 @@ class LlmInterpret:
                 case "end":
                     response += end_json_ids
                     break
-        print("Final decoded response:", self.llm.decode(response))
         return str(self.llm.decode(response))
 
     def check_all_param_here(self, func_name: str) -> int:
@@ -360,7 +368,7 @@ class LlmInterpret:
                     available_tokens.append(token_id)
             return available_tokens
 
-        available_tokens: list[int] = self.llm.encode('"[]\\/')[0].tolist()
+        available_tokens = self.llm.encode('"[]\\/')[0].tolist()
         available_tokens.extend(self.llm.encode(" ")[0].tolist())
         available_tokens.extend(self.llm.encode(prompt)[0].tolist())
         split_prompt: list[str] = prompt.split()
@@ -375,7 +383,15 @@ class LlmInterpret:
         function_name: str,
         parameter_name: str,
     ) -> Optional[str]:
-        """Return the declared type for a parameter of the chosen function."""
+        """Return the declared type for a parameter of the chosen function.
+
+        Args:
+            function_name: Name of the selected function.
+            parameter_name: Name of the parameter being generated.
+
+        Returns:
+            The parameter type as a string, or None if not found.
+        """
         for function in self.functions:
             if function["name"] != function_name:
                 continue
@@ -449,6 +465,11 @@ class ProcessorJSON(ABC):
     """
 
     def __init__(self, llm: Small_LLM_Model) -> None:
+        """Initialize the JSON processor with an LLM backend.
+
+        Args:
+            llm: The language model instance for token operations.
+        """
         self.llm: Small_LLM_Model = llm
 
     @abstractmethod
@@ -502,6 +523,12 @@ class ProcessorJSON(ABC):
 
 
 class NameJSON(ProcessorJSON):
+    """Processor for generating and validating function names in JSON output.
+
+    Attributes:
+        max_tokens: Maximum number of tokens allowed for name generation.
+    """
+
     max_tokens: int = 50
 
     def __init__(
@@ -510,6 +537,13 @@ class NameJSON(ProcessorJSON):
             valid_names: list[str],
             llm: Small_LLM_Model
     ) -> None:
+        """Initialize the name JSON processor.
+
+        Args:
+            ids: Initial token sequence.
+            valid_names: List of allowed function names.
+            llm: Language model instance for encoding/decoding.
+        """
         super().__init__(llm)
         self.name: list[int] = []
         self.ids: list[int] = ids
@@ -521,6 +555,14 @@ class NameJSON(ProcessorJSON):
             self,
             av_tokens: list[int]
     ) -> Any:
+        """Generate a function name token by token until a match is found.
+
+        Args:
+            av_tokens: List of allowed token ids for generation.
+
+        Returns:
+            List of token ids representing the generated name.
+        """
         while self.tokens <= NameJSON.max_tokens:
             next_token_id: int = self.get_constrained_logit(
                 av_tokens, self.ids)
@@ -538,6 +580,11 @@ class NameJSON(ProcessorJSON):
     def end_of_line(
             self
     ) -> Any:
+        """Add closing quote and comma after function name.
+
+        Returns:
+            Token ids for the closing quote and comma.
+        """
         after_name_ids: list[int] = list(self.llm.encode('",')[0])
         self.ids += after_name_ids
         self.tokens += len(after_name_ids)
@@ -545,6 +592,12 @@ class NameJSON(ProcessorJSON):
 
 
 class ParametersJSON(ProcessorJSON):
+    """Processor for generating parameter keys and values in JSON output.
+
+    Attributes:
+        max_tokens: Maximum number of tokens allowed for parameter generation.
+    """
+
     max_tokens: int = 100
 
     def __init__(
@@ -552,12 +605,24 @@ class ParametersJSON(ProcessorJSON):
             ids: list[int],
             llm: Small_LLM_Model
     ) -> None:
+        """Initialize the parameters JSON processor.
+
+        Args:
+            ids: Initial token sequence.
+            llm: Language model instance for encoding/decoding.
+        """
         super().__init__(llm)
         self.param: list[int] = []
         self.ids: list[int] = ids
         self.tokens: int = 0
+        self.chosen_func: str = ""
 
     def put_start(self) -> Any:
+        """Add the opening for the parameters object.
+
+        Returns:
+            Token ids for the opening parameters structure.
+        """
         parameters_key_ids: list[int] = list(
             self.llm.encode('"parameters":{"')[0]
         )
@@ -568,6 +633,14 @@ class ParametersJSON(ProcessorJSON):
             self,
             av_tokens: list[int]
     ) -> Any:
+        """Generate a parameter (key or value) token by token.
+
+        Args:
+            av_tokens: List of allowed token ids for generation.
+
+        Returns:
+            List of token ids representing the generated parameter.
+        """
         self.param = []
         while self.tokens <= ParametersJSON.max_tokens:
             next_token_id: int = self.get_constrained_logit(
@@ -580,14 +653,17 @@ class ParametersJSON(ProcessorJSON):
                 inverted_decoded_param: str = decoded_param[::-1]
                 for i, char in enumerate(inverted_decoded_param):
                     if char == "," and inverted_decoded_param[i+1] == '"':
-                        print(f"Returning parameter value: '{decoded_param[:len(decoded_param)-i-1]}'")
                         return self.llm.encode(
                             decoded_param[:len(decoded_param)-i-1])[0].tolist()
-                print(f"Returning not truncated: '{decoded_param}'")
                 return self.param
         return self.param
 
-    def end_of_line(self):
+    def end_of_line(self) -> Any:
+        """Add colon and opening quote after parameter key.
+
+        Returns:
+            Token ids for the colon and opening quote.
+        """
         colon_ids: list[int] = list(self.llm.encode(':"')[0])
         self.ids += colon_ids
         self.tokens += len(colon_ids)
